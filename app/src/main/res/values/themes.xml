@@ -1,4 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+
+    <!-- This is your app's main theme. It is what the app uses AFTER the splash screen. -->
     <style name="Theme.MarketMaker" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <!--
+    ================================================================================
+    This is the special theme for the system splash screen.
+    We are editing this section specifically.
+    ================================================================================
+    -->
+    <style name="Theme.App.Starting" parent="Theme.SplashScreen">
+
+        <!-- This sets the solid background color. It appears instantly.
+             It MUST match the color you defined in colors.xml and your layer-list. -->
+        <item name="windowSplashScreenBackground">@color/splash_background_color</item>
+
+        <!--
+           *** THE CRITICAL FIX IS HERE ***
+           This line tells the system which drawable to show on the splash screen.
+           Instead of pointing to your raw .png file, we now point to the special
+           layer-list XML file we created.
+        -->
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_screen_drawable</item>
+
+        <!-- This line tells the system which theme to switch to after the
+             splash screen is finished. It must point to your main app theme. -->
+        <item name="postSplashScreenTheme">@style/Theme.MarketMaker</item>
+
+    </style>
+
 </resources>
