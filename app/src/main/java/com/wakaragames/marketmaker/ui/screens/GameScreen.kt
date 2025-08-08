@@ -2,168 +2,90 @@ package com.wakaragames.marketmaker.ui.screens
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
 import com.wakaragames.marketmaker.data.models.CandleData
-import com.wakaragames.marketmaker.data.models.GameState
 import com.wakaragames.marketmaker.data.models.PlayerPortfolio
-import com.wakaragames.marketmaker.data.persistence.GameStateManager
 import com.wakaragames.marketmaker.ui.components.MockPriceChart
 import com.wakaragames.marketmaker.ui.theme.MarketMakerTheme
-import kotlinx.coroutines.delay
+import com.wakaragames.marketmaker.viewmodels.GameViewModel
 import java.text.NumberFormat
 import java.util.*
-import kotlin.math.abs
 import kotlin.math.max
-import kotlin.math.min
-import kotlin.random.Random
-
-// A default state for starting a brand new game.
-private val defaultGameState = GameState(
-    playerPortfolio = PlayerPortfolio(cash = 20000.0, coins = 10000),
-    candleHistory = listOf(CandleData(open = 1f, high = 1.03f, low = 0.97f, close = 1f))
-)
 
 /**
- * The main game screen where the player interacts with the price chart and portfolio.
- * This composable is now the state owner for the entire game session.
+ * The main game screen. This is now a "dumb" UI component that observes the
+ * GameViewModel and sends user events up to it.
  */
 @Composable
 fun GameScreen(
     modifier: Modifier = Modifier,
-    loadFromSave: Boolean // Decides whether to load a saved game or start fresh.
+    viewModel: GameViewModel // Its only parameter is the shared ViewModel
 ) {
-    val context = LocalContext.current
-
-    // The single source of truth for the entire game state.
-    var gameState by remember {
-        mutableStateOf(
-            if (loadFromSave) {
-                GameStateManager.loadGameState(context) ?: defaultGameState
-            } else {
-                defaultGameState
-            }
-        )
-    }
-
-    // --- AUTO-SAVE LOGIC ---
-    // This effect observes the app's lifecycle and saves the game state
-    // automatically when the app goes into the background (ON_PAUSE).
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_PAUSE) {
-                GameStateManager.saveGameState(context, gameState)
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        // Clean up the observer when the composable is disposed.
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-        }
-    }
-
-    // --- CANDLE GENERATION LOGIC ---
-    // This effect runs continuously to generate new candles and update the game state.
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(2000)
-            val lastClose = gameState.candleHistory.last().close
-            val newCandle = generateNextCandle(lastClose)
-
-            // Add the new candle and ensure the history list doesn't exceed 30 items.
-            val updatedHistory = (gameState.candleHistory + newCandle).takeLast(30)
-            gameState = gameState.copy(candleHistory = updatedHistory)
-        }
-    }
+    // Collect the game state as state. The UI will automatically
+    // recompose whenever the gameState in the ViewModel changes.
+    val gameState by viewModel.gameState.collectAsState()
 
     // --- DERIVED STATE & VALIDATION ---
+    // These values are derived from the state on each recomposition.
     val latestCandle = gameState.candleHistory.lastOrNull()
     val currentPrice = latestCandle?.close?.toDouble() ?: 0.0
-    val transactionAmount = 100
-    val buyCost = transactionAmount * currentPrice
-    val sellRevenue = transactionAmount * currentPrice
+    val buyCost = 100 * currentPrice
+    val startIndex = max(0, gameState.historicalCandleCount - gameState.candleHistory.size)
 
     val canAffordToBuy = gameState.playerPortfolio.cash >= buyCost && currentPrice > 0
-    val hasCoinsToSell = gameState.playerPortfolio.coins >= transactionAmount
+    val hasCoinsToSell = gameState.playerPortfolio.coins >= 100
 
     // --- UI ---
     Surface(
         modifier = modifier.fillMaxSize(),
-        color = MaterialTheme.colorScheme.background
+        color = Color(0xFF0D1B2A)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .statusBarsPadding()
                 .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
-            // Portfolio Display
-            PortfolioDisplay(portfolio = gameState.playerPortfolio)
 
-            // The Price Chart (now stateless, just draws the data)
+            // The chart is a stateless composable that just draws the data it's given
             MockPriceChart(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
                     .padding(vertical = 8.dp),
-                candles = gameState.candleHistory // Pass the candle history from our state
+                candles = gameState.candleHistory,
+                startIndex = startIndex
             )
 
-            // Live Price & Buy/Sell Buttons
+            // The controls at the bottom of the screen
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                LivePriceDisplay(latestCandle = latestCandle)
+                PortfolioDisplay(portfolio = gameState.playerPortfolio)
+                Spacer(modifier = Modifier.height(16.dp))
+                LivePriceDisplay(
+                    latestCandle = latestCandle,
+                    growthRate = gameState.currentGrowthRate
+                )
                 Spacer(modifier = Modifier.height(16.dp))
                 BuySellControls(
-                    onBuyClicked = {
-                        val newPortfolio = gameState.playerPortfolio.copy(
-                            cash = gameState.playerPortfolio.cash - buyCost,
-                            coins = gameState.playerPortfolio.coins + transactionAmount
-                        )
-                        gameState = gameState.copy(playerPortfolio = newPortfolio)
-                    },
-                    onSellClicked = {
-                        val newPortfolio = gameState.playerPortfolio.copy(
-                            cash = gameState.playerPortfolio.cash + sellRevenue,
-                            coins = gameState.playerPortfolio.coins - transactionAmount
-                        )
-                        gameState = gameState.copy(playerPortfolio = newPortfolio)
-                    },
+                    onBuyClicked = { viewModel.performBuyTransaction() }, // Send "buy" event up
+                    onSellClicked = { viewModel.performSellTransaction() }, // Send "sell" event up
                     isBuyEnabled = canAffordToBuy,
                     isSellEnabled = hasCoinsToSell
                 )
             }
         }
     }
-}
-
-// --- HELPER FUNCTION FOR CANDLE GENERATION ---
-
-private fun generateNextCandle(previousClose: Float): CandleData {
-    val open = previousClose
-    val baselineIncrease = 0.65f
-    val isGreen = Random.nextFloat() < 0.70f
-    val isDramatic = Random.nextFloat() < 0.15f
-    val dramaticMultiplier = 3.5f
-    val normalMultiplier = 0.8f
-    val change = baselineIncrease * if (isDramatic) (Random.nextFloat() - 0.3f) * dramaticMultiplier else (Random.nextFloat() - 0.45f) * normalMultiplier
-    val close = if (isGreen) open + abs(change) else open - abs(change)
-    val high = max(open, close) * (1 + Random.nextFloat() * 0.03f)
-    val low = min(open, close) * (1 - Random.nextFloat() * 0.03f)
-    return CandleData(open, high, low, max(0.1f, close))
 }
 
 // --- SUPPORTING UI COMPOSABLES ---
@@ -181,41 +103,68 @@ private fun PortfolioDisplay(portfolio: PlayerPortfolio) {
             Text(
                 text = "CASH",
                 style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                color = Color.White
             )
             Text(
                 text = NumberFormat.getCurrencyInstance(Locale.US).format(portfolio.cash),
                 style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Bold,
+                color = Color.White
             )
         }
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
                 text = "COINS",
                 style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                color = Color.White
             )
             Text(
-                text = "%,d".format(portfolio.coins),
+                text = "%,d".format(portfolio.coins), // Adds thousand separators
                 style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Bold,
+                color = Color.White
             )
         }
     }
 }
 
 @Composable
-private fun LivePriceDisplay(latestCandle: CandleData?) {
-    Text(
-        text = latestCandle?.let { "$%.2f".format(it.close) } ?: "---",
-        fontSize = 32.sp,
-        fontWeight = FontWeight.Bold,
-        color = if (latestCandle == null || latestCandle.close >= latestCandle.open) {
-            Color(0xFF00C853)
-        } else {
-            Color(0xFFD50000)
-        }
-    )
+private fun LivePriceDisplay(
+    latestCandle: CandleData?,
+    growthRate: Float // Add the growth rate as a parameter
+) {
+    // We'll use a Row to place the price and growth rate side-by-side.
+    Row(
+        verticalAlignment = Alignment.Bottom,
+        horizontalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // Live Price Text
+        Text(
+            text = latestCandle?.let { "$%.2f".format(it.close) } ?: "---",
+            fontSize = 32.sp,
+            fontWeight = FontWeight.Bold,
+            color = if (latestCandle == null || latestCandle.close >= latestCandle.open) {
+                Color(0xFF00C853)
+            } else {
+                Color(0xFFD50000)
+            }
+        )
+
+        // --- NEW GROWTH RATE DISPLAY ---
+        // Convert the raw growth rate (e.g., 0.65) to a percentage string (e.g., "+1.52%")
+        // This is a simplified calculation for display purposes.
+        val growthPercent = (growthRate / (latestCandle?.close ?: 1f)) * 100
+        val growthText = String.format("%.2f%%", growthPercent)
+        val growthColor = if (growthPercent >= 0) Color(0xFF00C853) else Color(0xFFD50000)
+
+        Text(
+            text = growthText,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold,
+            color = growthColor,
+            modifier = Modifier.padding(bottom = 4.dp) // Align baseline with price
+        )
+    }
 }
 
 @Composable
@@ -255,6 +204,36 @@ private fun BuySellControls(
 @Composable
 private fun GameScreenPreview() {
     MarketMakerTheme {
-        GameScreen(loadFromSave = false)
+        // Since we can't instantiate a ViewModel in a Preview, we build the UI
+        // with static data to see what it looks like.
+        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                PortfolioDisplay(portfolio = PlayerPortfolio(20000.0, 10000))
+                // The chart will be empty in the preview, which is acceptable.
+                MockPriceChart(
+                    modifier = Modifier.weight(1f),
+                    candles = listOf(),
+                    startIndex = 0
+                )
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    LivePriceDisplay(latestCandle = null,growthRate = 1f)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    BuySellControls(
+                        onBuyClicked = {},
+                        onSellClicked = {},
+                        isBuyEnabled = true,
+                        isSellEnabled = true
+                    )
+                }
+            }
+        }
     }
 }

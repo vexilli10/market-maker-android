@@ -9,8 +9,13 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class GameState(
     val playerPortfolio: PlayerPortfolio,
-    val candleHistory: List<CandleData>
-    // Future fields like unlockedUpgrades, newsHistory, etc., will go here.
+    val candleHistory: List<CandleData>,
+    val historicalCandleCount: Int,
+    val purchasedUpgradeIds: Set<String>, // Tracks which upgrades have been bought
+    val activeEffects: List<ActiveEffect>, // Tracks currently active timed effects
+    val newsFeed: List<NewsItem>, // Holds all triggered news headlines
+    val triggeredOneTimeEventIds: Set<String>, // Tracks which unique events have happened
+    val currentGrowthRate: Float = 0.65f
 )
 
 @SuppressLint("UnsafeOptInUsageError")

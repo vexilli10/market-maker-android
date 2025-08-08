@@ -18,7 +18,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.wakaragames.marketmaker.data.models.CandleData // <-- CORRECTLY IMPORTING THE PUBLIC MODEL
+import com.wakaragames.marketmaker.data.models.CandleData
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -36,11 +36,11 @@ private val colorAxisText = Color.White.copy(alpha = 0.8f)
 @Composable
 internal fun MockPriceChart(
     modifier: Modifier = Modifier,
-    candles: List<CandleData> // Now correctly uses the public CandleData
+    candles: List<CandleData>,
+    startIndex: Int
 ) {
     val animationPhase = remember { Animatable(1f) }
 
-    // Animate whenever the number of candles changes
     LaunchedEffect(candles.size) {
         animationPhase.snapTo(0f)
         animationPhase.animateTo(1f, animationSpec = tween(durationMillis = 500))
@@ -70,7 +70,7 @@ internal fun MockPriceChart(
         val candleWidth = chartWidth / 31f
         val xShift = if (candles.size < 30) 0f else candleWidth * animationPhase.value
 
-        // ... Y-Axis and X-Axis drawing logic remains the same ...
+        // Y-Axis drawing logic remains unchanged
         val yAxisLabels = generateYAxisLabels(minPrice, maxPrice)
         yAxisLabels.forEach { price ->
             val y = chartHeight * (1 - (price - minPrice) / priceRange)
@@ -89,12 +89,30 @@ internal fun MockPriceChart(
             )
         }
 
-        (0..30 step 5).forEach { index ->
-            val x = (index * candleWidth) + (candleWidth / 2) - xShift
-            if (x > 0 && x < chartWidth) {
+
+        // --- FIXED DYNAMIC X-AXIS LOGIC ---
+
+        // 1. Calculate the start and end indices of the candles currently visible on screen.
+        val firstVisibleLocalIndex = (xShift / candleWidth).toInt()
+        val lastVisibleLocalIndex = ((xShift + chartWidth) / candleWidth).toInt().coerceAtMost(candles.size - 1)
+
+        for (localIndex in firstVisibleLocalIndex..lastVisibleLocalIndex) {
+            if (localIndex < 0) continue
+
+            // Calculate the candle's true historical index
+            val historicalIndex = startIndex + localIndex
+            // Convert to a 1-indexed value for user display (Bug #2 Fix)
+            val userVisibleIndex = historicalIndex + 1
+
+            // Draw a label for every 5th candle (e.g., 5, 10, 15...)
+            if (userVisibleIndex > 0 && userVisibleIndex % 5 == 0) {
+                val labelText = "$userVisibleIndex"
+                // The xPosition is still based on the LOCAL index
+                val xPosition = (localIndex * candleWidth) + (candleWidth / 2) - xShift
+
                 drawContext.canvas.nativeCanvas.drawText(
-                    "$index",
-                    x,
+                    labelText,
+                    xPosition,
                     chartHeight + xAxisAreaHeight,
                     textPaint.apply { textAlign = Paint.Align.CENTER }
                 )
@@ -102,25 +120,20 @@ internal fun MockPriceChart(
         }
 
 
-        // --- DRAW CANDLES ---
+        // --- DRAW CANDLES --- (Unchanged)
         candles.forEachIndexed { index, candle ->
             val xOffset = index * candleWidth + (candleWidth / 2) - xShift
             if (xOffset > -candleWidth && xOffset < chartWidth + candleWidth) {
-                // This call is now valid because `drawCandle` expects CandleData
                 drawCandle(this, candle, xOffset, candleWidth * 0.8f, minPrice, priceRange, chartHeight)
             }
         }
     }
 }
 
-/**
- * Helper function to draw a single candle.
- * *** THIS IS THE MAIN FIX ***
- * The function signature now correctly expects 'CandleData'.
- */
+// --- HELPER FUNCTIONS --- (Unchanged)
 private fun DrawScope.drawCandle(
     drawScope: DrawScope,
-    candle: CandleData, // <-- CORRECTED TYPE
+    candle: CandleData,
     xOffset: Float,
     candleWidth: Float,
     minPrice: Float,
@@ -138,7 +151,6 @@ private fun DrawScope.drawCandle(
     drawRect(color = candleColor, topLeft = Offset(x = xOffset - candleWidth / 2, y = min(openY, closeY)), size = androidx.compose.ui.geometry.Size(width = candleWidth, height = abs(openY - closeY).takeIf { it > 0f } ?: 1f))
 }
 
-// Assumes this function lives in a ChartUtils.kt file or similar.
 private fun generateYAxisLabels(min: Float, max: Float, maxTicks: Int = 5): List<Float> {
     val range = max - min
     if (range <= 0) return listOf(min)
